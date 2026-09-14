@@ -3,7 +3,10 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -38,15 +41,25 @@ def test_release_version_validator_rejects_shell_payload_without_executing_it(tm
     assert f"{WORKSPACE_VERSION} release workflow" in result.stderr
 
 
-def test_release_workflow_uses_declared_version_without_dispatch_override(tmp_path: Path) -> None:
-    import textwrap
+def test_release_workflow_uses_declared_version_without_dispatch_override() -> None:
 
     workflow = RELEASE_WORKFLOW.read_text()
     assert "inputs.version" not in workflow
     assert "      version:" not in workflow.split("jobs:", 1)[0]
     assert "AGENTIC_API_RELEASE_VERSION: ${{ needs.release-version.outputs.version }}" in workflow
+    version_job = workflow.split("  release-version:", 1)[1].split("  build-wheels:", 1)[0]
+    assert 'python-version: "3.12"' in version_job
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Release job uses Python 3.12 with stdlib tomllib")
+def test_release_version_reader_follows_cargo_manifest(tmp_path: Path) -> None:
+    import shlex
+    import textwrap
+
+    workflow = RELEASE_WORKFLOW.read_text()
     block = next(block for block in _workflow_run_blocks(workflow) if "tomllib" in block)
     script = textwrap.dedent(block.removeprefix("|").lstrip("\n"))
+    script = script.replace("python3 -", f"{shlex.quote(sys.executable)} -", 1)
     output = tmp_path / "output"
     env = os.environ.copy()
     env["GITHUB_OUTPUT"] = str(output)
