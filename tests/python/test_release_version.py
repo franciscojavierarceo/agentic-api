@@ -223,3 +223,25 @@ def test_publication_artifact_gate_requires_exact_wheel_set(tmp_path: Path) -> N
     wheel = dist / f'agentic_api-{WORKSPACE_VERSION}-{tags[0]}.whl'
     wheel.rename(dist / f'agentic_api-0.0.0-{tags[0]}.whl')
     assert validate().returncode != 0
+
+
+def test_pypi_duplicate_version_check_fails_closed(tmp_path: Path) -> None:
+    import textwrap
+
+    workflow = RELEASE_WORKFLOW.read_text()
+    version_job = workflow.split('  build-wheels:', 1)[0]
+    assert 'name: Reject an existing PyPI release\n        if: inputs.publish' in version_job
+    block = next(block for block in _workflow_run_blocks(version_job) if 'pypi.org/pypi/' in block)
+    script = textwrap.dedent(block.removeprefix('|').lstrip('\n'))
+    curl = tmp_path / 'curl'
+    curl.write_text('#!/bin/sh\nprintf "%s" "$TEST_HTTP_STATUS"\nexit "$TEST_CURL_EXIT"\n')
+    curl.chmod(0o755)
+    env = os.environ.copy()
+    env.update(PATH=f'{tmp_path}:{env["PATH"]}', AGENTIC_API_RELEASE_VERSION=WORKSPACE_VERSION)
+    for status, exit_code, succeeds in [('404', '0', True), ('200', '0', False), ('403', '0', False),
+                                        ('429', '0', False), ('500', '0', False), ('000', '28', False)]:
+        env.update(TEST_HTTP_STATUS=status, TEST_CURL_EXIT=exit_code)
+        result = subprocess.run(['bash', '-eu', '-c', script], env=env, capture_output=True, text=True)
+        assert (result.returncode == 0) == succeeds, (status, result.stdout, result.stderr)
+        if status == '200':
+            assert 'already published' in result.stdout + result.stderr

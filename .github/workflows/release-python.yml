@@ -51,6 +51,27 @@ jobs:
           print(f"Release version: {version}")
           PYTHON
 
+      - name: Reject an existing PyPI release
+        if: inputs.publish
+        env:
+          AGENTIC_API_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --connect-timeout 10 --max-time 30 \
+            "https://pypi.org/pypi/agentic-api/${AGENTIC_API_RELEASE_VERSION}/json")"
+          case "$status" in
+            404) echo "Version $AGENTIC_API_RELEASE_VERSION is not published" ;;
+            200)
+              echo "::error::agentic-api $AGENTIC_API_RELEASE_VERSION is already published; bump the Cargo workspace version"
+              exit 1
+              ;;
+            *)
+              echo "::error::Unable to check PyPI release availability (HTTP $status)"
+              exit 1
+              ;;
+          esac
+
   build-wheels:
     name: Build ${{ matrix.target }} wheel artifact
     needs: release-version

@@ -107,6 +107,9 @@ There is no separate version input or default to maintain. Leave `publish` unche
 build-only run, or select it to publish to PyPI after every platform build, installed-wheel test, and wheel check
 succeeds. Merging code does not publish a package.
 
+Publish runs check PyPI before building and fail if the declared version already exists. Only a not-found response
+allows the build to proceed; network errors and other HTTP failures stop the run. Build-only runs skip this check.
+
 The publishing job downloads the validated artifacts from the same workflow run, requires the complete three-wheel
 set, and uploads them without rebuilding. It uses the `pypi` GitHub environment and PyPI Trusted Publishing for
 `vllm-project/agentic-api`, workflow `release-python.yml`, environment `pypi`; no PyPI API token secret is required.
