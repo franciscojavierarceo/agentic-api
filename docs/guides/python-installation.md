@@ -98,3 +98,25 @@ here are examples that should be revalidated on the target Linux GPU before prom
 
 Other documented model IDs already exercised in this repository include `Qwen/Qwen3.5-35B-A3B-FP8` and
 `Qwen/Qwen3.8-27B-FP8`. Treat them as examples pending hardware revalidation rather than as a CLI allowlist.
+
+## Publishing wheels (maintainers)
+
+The `Release Python` GitHub Actions workflow builds and validates Linux x86_64, macOS x86_64, and macOS arm64 wheels.
+Run `release-python.yml` on `main` with the version already recorded in `Cargo.toml`. Leave `publish` unchecked for a
+build-only run, or select it to publish to PyPI after every platform build, installed-wheel test, and wheel check
+succeeds. Merging code does not publish a package.
+
+The publishing job downloads the validated artifacts from the same workflow run, requires the complete three-wheel
+set, and uploads them without rebuilding. It uses the `pypi` GitHub environment and PyPI Trusted Publishing for
+`vllm-project/agentic-api`, workflow `release-python.yml`, environment `pypi`; no PyPI API token secret is required.
+The build jobs do not receive the publishing job's OpenID Connect permission.
+
+After merge, a maintainer can dispatch publication with:
+
+```bash
+gh workflow run release-python.yml --ref main -f version=VERSION -F publish=true
+```
+
+Replace `VERSION` with the merged workspace version. Review the run before announcing availability. Existing files
+are not silently skipped: if an upload partially succeeds, inspect the PyPI release before deciding how to recover.
+The workflow does not configure or publish to TestPyPI.

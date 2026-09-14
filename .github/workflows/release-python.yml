@@ -6,10 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Build-only Python release version already merged into main"
+        description: "Python release version already merged into main"
         required: true
         type: string
         default: "0.6.0"
+
+      publish:
+        description: "Publish validated wheels to PyPI after all builds succeed"
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: release-python-${{ inputs.version }}
@@ -47,7 +53,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Verify build-only release gate version
+      - name: Verify release version
         run: scripts/validate-python-release-version.sh
 
       - name: Set up Python
@@ -170,3 +176,46 @@ jobs:
           name: agentic-api-${{ inputs.version }}-${{ matrix.target }}
           path: ${{ steps.build.outputs.wheel_path }}
           if-no-files-found: error
+
+  publish:
+    name: Publish validated wheels to PyPI
+    needs: build-wheels
+    if: github.ref == 'refs/heads/main' && inputs.publish
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/agentic-api/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download validated wheels from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: agentic-api-${{ inputs.version }}-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Validate publication artifacts
+        env:
+          AGENTIC_API_RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+
+          version = os.environ["AGENTIC_API_RELEASE_VERSION"]
+          tags = (
+              "py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64",
+              "py3-none-macosx_10_12_x86_64",
+              "py3-none-macosx_11_0_arm64",
+          )
+          expected = {f"agentic_api-{version}-{tag}.whl" for tag in tags}
+          actual = {path.name for path in Path("dist").iterdir() if path.is_file()}
+          if actual != expected:
+              raise SystemExit(f"Expected exactly {sorted(expected)}, found {sorted(actual)}")
+          PYTHON
+
+      - name: Publish wheels using Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          packages-dir: dist/

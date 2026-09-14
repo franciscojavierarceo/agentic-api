@@ -17,7 +17,7 @@ WORKSPACE_VERSION = re.search(
 ).group(1)
 
 
-def test_release_version_validator_accepts_build_only_version() -> None:
+def test_release_version_validator_accepts_workspace_version() -> None:
     env = os.environ.copy()
     env["AGENTIC_API_RELEASE_VERSION"] = WORKSPACE_VERSION
 
@@ -35,7 +35,7 @@ def test_release_version_validator_rejects_shell_payload_without_executing_it(tm
 
     assert result.returncode != 0
     assert not marker.exists()
-    assert f"{WORKSPACE_VERSION} build-only workflow" in result.stderr
+    assert f"{WORKSPACE_VERSION} release workflow" in result.stderr
 
 
 def test_release_workflow_keeps_dispatch_version_out_of_shell_source() -> None:
@@ -163,3 +163,60 @@ def _workflow_trigger_section(workflow: str, trigger: str) -> str:
             break
         section.append(line)
     return "\n".join(section)
+
+
+def test_python_publishing_is_opt_in_and_waits_for_validated_wheels() -> None:
+    workflow = RELEASE_WORKFLOW.read_text()
+    assert '      publish:\n' in workflow
+    publish_input = workflow.split('      publish:\n', 1)[1].split('\nconcurrency:', 1)[0]
+    assert 'type: boolean' in publish_input
+    assert 'default: false' in publish_input
+    build, publish = workflow.split('\n  publish:\n', 1)
+    assert 'id-token: write' not in build
+    assert 'needs: build-wheels' in publish
+    assert "if: github.ref == 'refs/heads/main' && inputs.publish" in publish
+    assert 'always()' not in publish
+    assert 'name: pypi' in publish
+    assert 'id-token: write' in publish
+    assert 'actions/download-artifact@' in publish
+    assert 'pattern: agentic-api-${{ inputs.version }}-*' in publish
+    assert 'merge-multiple: true' in publish
+    assert 'pypa/gh-action-pypi-publish@' in publish
+    assert 'packages-dir: dist/' in publish
+    assert 'skip-existing: true' not in publish
+    assert 'secrets.' not in publish
+    assert 'actions/checkout@' not in publish
+    assert publish.index('Validate publication artifacts') < publish.index('pypa/gh-action-pypi-publish@')
+
+
+def test_publication_artifact_gate_requires_exact_wheel_set(tmp_path: Path) -> None:
+    workflow = RELEASE_WORKFLOW.read_text()
+    block = next(block for block in _workflow_run_blocks(workflow) if 'Expected exactly' in block)
+    # Run the workflow's actual validation body without invoking an upload.
+    import textwrap
+
+    script = textwrap.dedent(block.removeprefix('|').lstrip('\n'))
+    dist = tmp_path / 'dist'
+    dist.mkdir()
+    tags = (
+        'py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64',
+        'py3-none-macosx_10_12_x86_64',
+        'py3-none-macosx_11_0_arm64',
+    )
+    env = os.environ.copy()
+    env['AGENTIC_API_RELEASE_VERSION'] = WORKSPACE_VERSION
+
+    def validate() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(['bash', '-eu', '-c', script], cwd=tmp_path, env=env, capture_output=True, text=True)
+
+    assert validate().returncode != 0
+    for tag in tags:
+        (dist / f'agentic_api-{WORKSPACE_VERSION}-{tag}.whl').touch()
+    assert validate().returncode == 0
+    extra = dist / 'unexpected.whl'
+    extra.touch()
+    assert validate().returncode != 0
+    extra.unlink()
+    wheel = dist / f'agentic_api-{WORKSPACE_VERSION}-{tags[0]}.whl'
+    wheel.rename(dist / f'agentic_api-0.0.0-{tags[0]}.whl')
+    assert validate().returncode != 0
