@@ -102,7 +102,8 @@ Other documented model IDs already exercised in this repository include `Qwen/Qw
 ## Publishing wheels (maintainers)
 
 The `Release Python` GitHub Actions workflow builds and validates Linux x86_64, macOS x86_64, and macOS arm64 wheels.
-Run `release-python.yml` on `main` with the version already recorded in `Cargo.toml`. Leave `publish` unchecked for a
+Run `release-python.yml` on `main`; it reads `[workspace.package].version` from `Cargo.toml` at the workflow commit.
+There is no separate version input or default to maintain. Leave `publish` unchecked for a
 build-only run, or select it to publish to PyPI after every platform build, installed-wheel test, and wheel check
 succeeds. Merging code does not publish a package.
 
@@ -114,9 +115,9 @@ The build jobs do not receive the publishing job's OpenID Connect permission.
 After merge, a maintainer can dispatch publication with:
 
 ```bash
-gh workflow run release-python.yml --ref main -f version=VERSION -F publish=true
+gh workflow run release-python.yml --ref main -F publish=true
 ```
 
-Replace `VERSION` with the merged workspace version. Review the run before announcing availability. Existing files
+Review the resolved workspace version and run before announcing availability. Existing files
 are not silently skipped: if an upload partially succeeds, inspect the PyPI release before deciding how to recover.
 The workflow does not configure or publish to TestPyPI.

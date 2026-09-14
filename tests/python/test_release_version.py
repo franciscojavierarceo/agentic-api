@@ -38,21 +38,24 @@ def test_release_version_validator_rejects_shell_payload_without_executing_it(tm
     assert f"{WORKSPACE_VERSION} release workflow" in result.stderr
 
 
-def test_release_workflow_keeps_dispatch_version_out_of_shell_source() -> None:
-    workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+def test_release_workflow_uses_declared_version_without_dispatch_override(tmp_path: Path) -> None:
+    import textwrap
 
-    assert "AGENTIC_API_RELEASE_VERSION: ${{ inputs.version }}" in workflow
-    run_blocks = _workflow_run_blocks(workflow)
-    assert run_blocks
-    assert all("${{ inputs.version }}" not in block for block in run_blocks)
-
-
-def test_release_workflow_default_matches_workspace_version() -> None:
-    workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
-    version_input = re.search(r'(?ms)^      version:\n.*?^        default: "([^"]+)"', workflow)
-
-    assert version_input is not None
-    assert version_input.group(1) == WORKSPACE_VERSION
+    workflow = RELEASE_WORKFLOW.read_text()
+    assert "inputs.version" not in workflow
+    assert "      version:" not in workflow.split("jobs:", 1)[0]
+    assert "AGENTIC_API_RELEASE_VERSION: ${{ needs.release-version.outputs.version }}" in workflow
+    block = next(block for block in _workflow_run_blocks(workflow) if "tomllib" in block)
+    script = textwrap.dedent(block.removeprefix("|").lstrip("\n"))
+    output = tmp_path / "output"
+    env = os.environ.copy()
+    env["GITHUB_OUTPUT"] = str(output)
+    for version in ("0.7.0", "1.2.3"):
+        (tmp_path / "Cargo.toml").write_text(f'[workspace.package]\nversion = "{version}"\n')
+        output.write_text("")
+        result = subprocess.run(["bash", "-eu", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert output.read_text() == f"version={version}\n"
 
 
 def test_crate_release_dry_run_packages_server_against_the_local_core() -> None:
@@ -173,13 +176,13 @@ def test_python_publishing_is_opt_in_and_waits_for_validated_wheels() -> None:
     assert 'default: false' in publish_input
     build, publish = workflow.split('\n  publish:\n', 1)
     assert 'id-token: write' not in build
-    assert 'needs: build-wheels' in publish
+    assert 'needs: [release-version, build-wheels]' in publish
     assert "if: github.ref == 'refs/heads/main' && inputs.publish" in publish
     assert 'always()' not in publish
     assert 'name: pypi' in publish
     assert 'id-token: write' in publish
     assert 'actions/download-artifact@' in publish
-    assert 'pattern: agentic-api-${{ inputs.version }}-*' in publish
+    assert 'pattern: agentic-api-${{ needs.release-version.outputs.version }}-*' in publish
     assert 'merge-multiple: true' in publish
     assert 'pypa/gh-action-pypi-publish@' in publish
     assert 'packages-dir: dist/' in publish
