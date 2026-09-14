@@ -3,9 +3,12 @@ import { useEffect, useState } from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Check, Copy, Terminal, Code2, ArrowUpRight } from 'lucide-react';
 import {
-  CARGO_COMMAND,
-  PYTHON_COMMAND,
-  LAUNCH_COMMANDS,
+  DEFAULT_INSTALL_METHOD,
+  INSTALL_METHODS,
+  type InstallMethod,
+  isInstallMethod,
+  getLaunchCommands,
+  getServeCommand,
   getLaunchInstructions,
 } from '@/lib/quickstart';
 import { REPO } from '@/lib/site';
@@ -57,6 +60,10 @@ function CopyCode({ code, label }: { code: string; label: string }) {
   );
 }
 export function Quickstart() {
+  const [installation, setInstallation] = useState<InstallMethod>(
+    DEFAULT_INSTALL_METHOD,
+  );
+  const launchCommands = getLaunchCommands(installation);
   useEffect(() => {
     const context = (document as Document & { modelContext?: ModelContext })
       .modelContext;
@@ -69,11 +76,16 @@ export function Quickstart() {
             name: 'get_launch_instructions',
             title: 'Get agent launch instructions',
             description:
-              'Read the build and launch instructions displayed on this page for Codex or Claude Code with vLLM. Returns commands; does not run commands or change configuration.',
+              'Read installation and launch instructions for Codex or Claude Code with vLLM. Defaults to the crates.io release; PyPI instructions are for the upcoming release. Returns commands; does not run commands or change configuration.',
             inputSchema: {
               type: 'object',
               properties: {
                 harness: { type: 'string', enum: ['codex', 'claude'] },
+                installation: {
+                  type: 'string',
+                  enum: ['crates', 'pypi', 'source'],
+                  default: DEFAULT_INSTALL_METHOD,
+                },
               },
               required: ['harness'],
               additionalProperties: false,
@@ -117,10 +129,10 @@ export function Quickstart() {
             <li>
               <span>02</span>
               <div>
-                <strong>Install and start Agentic API</strong>
+                <strong>Install Agentic API</strong>
                 <p>
-                  Install the Python wheel with pip, or install the Rust CLI
-                  with Cargo. Start the gateway against your vLLM upstream.
+                  Get the release from crates.io. A Python package is coming to
+                  PyPI, with source builds available for development.
                 </p>
               </div>
             </li>
@@ -129,9 +141,8 @@ export function Quickstart() {
               <div>
                 <strong>Launch your client</strong>
                 <p>
-                  For the Cargo CLI, choose Codex or Claude Code below. The
-                  client launcher starts its own gateway; use it instead of the
-                  standalone serve command.
+                  Install Codex or Claude Code, then choose your client and
+                  served model.
                 </p>
               </div>
             </li>
@@ -150,39 +161,47 @@ export function Quickstart() {
             <span>QUICKSTART</span>
             <span>bash</span>
           </div>
-          <Tabs defaultValue="python" className="launch-tabs">
+          <Tabs
+            value={installation}
+            onValueChange={(value) => {
+              if (isInstallMethod(value)) setInstallation(value);
+            }}
+            className="launch-tabs"
+          >
             <TabsList
-              className="launch-tab-list"
-              aria-label="Choose installation method"
+              className="launch-tab-list install-tab-list"
+              aria-label="Choose how to install Agentic API"
             >
-              <TabsTrigger value="python">Python / pip</TabsTrigger>
-              <TabsTrigger value="cargo">Cargo</TabsTrigger>
+              {Object.entries(INSTALL_METHODS).map(([method, details]) => (
+                <TabsTrigger key={method} value={method}>
+                  {details.label}
+                </TabsTrigger>
+              ))}
             </TabsList>
-            <TabsContent value="python">
-              <CopyCode
-                code={PYTHON_COMMAND}
-                label="Install and start with Python"
-              />
-              <div className="terminal-note">
-                <p>
-                  Python 3.10+. Download your platform wheel from the{' '}
-                  <a href={`${REPO}/actions/workflows/release-python.yml`}>
-                    release workflow
-                  </a>
-                  . PyPI publication is pending; once published, install with{' '}
-                  <code>python -m pip install agentic-api</code>.
-                </p>
-              </div>
-            </TabsContent>
-            <TabsContent value="cargo">
-              <CopyCode
-                code={CARGO_COMMAND}
-                label="Install and start with Cargo"
-              />
-            </TabsContent>
+            {Object.entries(INSTALL_METHODS).map(([method, details]) => (
+              <TabsContent key={method} value={method}>
+                <CopyCode
+                  code={details.command}
+                  label={
+                    method === 'source'
+                      ? 'Build from source'
+                      : method === 'pypi'
+                        ? 'Install from PyPI — coming soon'
+                        : 'Install from crates.io'
+                  }
+                />
+                <p className="install-note">{details.note}</p>
+              </TabsContent>
+            ))}
           </Tabs>
-          <p className="terminal-note">
-            Coding clients with the Cargo-installed CLI
+          <CopyCode
+            key={installation + '-serve'}
+            code={getServeCommand(installation)}
+            label="Start the standalone server"
+          />
+          <p className="install-note">
+            Or launch a coding client below; its launcher starts the gateway for
+            you.
           </p>
           <Tabs defaultValue="codex" className="launch-tabs">
             <TabsList
@@ -197,11 +216,16 @@ export function Quickstart() {
               </TabsTrigger>
             </TabsList>
             <TabsContent value="codex">
-              <CopyCode code={LAUNCH_COMMANDS.codex} label="Launch Codex" />
+              <CopyCode
+                key={installation + '-codex'}
+                code={launchCommands.codex}
+                label="Launch Codex"
+              />
             </TabsContent>
             <TabsContent value="claude">
               <CopyCode
-                code={LAUNCH_COMMANDS.claude}
+                key={installation + '-claude'}
+                code={launchCommands.claude}
                 label="Launch Claude Code"
               />
             </TabsContent>

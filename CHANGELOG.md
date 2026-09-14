@@ -2,7 +2,7 @@
 
 All notable changes to Agentic API are documented here.
 
-## [0.7.0] - 2026-09-11
+## [0.7.0] - 2026-09-14
 
 ### Added
 
@@ -16,6 +16,22 @@ All notable changes to Agentic API are documented here.
 
 ### Changed
 
+- Refactored `web_search` into a typed provider contract and module split (`tool/web_search/{mod,args,you}`) as
+  the extension seam for further providers (#291): provider responses now normalize into `WebSearchResult` /
+  `WebSearchProviderMetadata` instead of forwarding raw You.com JSON, and the provider trait exposes a
+  `max_concurrent_requests` ceiling that bounds query fan-out. The model-facing tool output keeps You.com's field
+  names and the public `web_search_call.action.sources` list is unchanged, but the normalization contract is now
+  explicit: cosmetic `thumbnail_url` / `original_thumbnail_url` / `favicon_url` and unknown fields are dropped, keys
+  follow the typed struct order, `null` and empty fields are omitted, and each query has a metadata object even
+  when the provider omits metadata or returns `null`. Its `query` falls back to the submitted query; absent
+  `search_uuid` and `latency` remain omitted. This intentionally changes the model-facing output from
+  `metadata: [null]` to `metadata: [{"query": "..."}]` in that case. An invalid `freshness` fails fast with a
+  tool config error instead of a provider round trip. The You.com response body and aggregate tool-output size
+  limits are unchanged. `WebSearchProviderConfig` keeps its existing public shape, gains a `new` constructor, and
+  redacts the API key in `Debug` output; provider selection and per-provider concurrency configuration are
+  deferred to the first additional provider.
+
+
 - Unified Responses JSON and SSE processing under `AgentPipeline`, sharing synchronous ingestion, typed output-item
   assembly, tool-call translation, lifecycle validation, and ordered client delivery (#274).
 - Introduced `MessagesRequestContext` for the Messages tool loop, preserving unmodeled upstream fields while
@@ -26,6 +42,10 @@ All notable changes to Agentic API are documented here.
 
 ### Fixed
 
+- Made stream delivery cancellation-safe, committing lifecycle and sequence state only after successful delivery and
+  bounding deferred events by count and bytes (#302).
+- Finished Messages inference rounds at `message_stop`, and allowed Messages to answer after forced tool use
+  (#290, #296).
 - Preserved incomplete upstream terminal status when an SSE completion event carries an incomplete response (#277).
 - Honored Responses WebSocket storage settings with bounded connection-local sessions (#257).
 - Applied the configured streaming chunk timeout to stalled upstream error-body reads in Responses streaming and
@@ -33,6 +53,8 @@ All notable changes to Agentic API are documented here.
 
 ### Testing
 
+- Added opt-in Python wheel publishing through PyPI Trusted Publishing, using the declared Cargo workspace version,
+  and rejected duplicate PyPI and crates.io releases before building (#301).
 - Expanded shell-tool replay and continuation coverage, shared-ingestion lifecycle checks, WebSocket session and
   storage tests, request-size boundary tests, and stalled upstream error-body regressions.
 
