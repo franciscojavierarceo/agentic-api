@@ -219,6 +219,9 @@ jobs:
           maturin-version: v1.14.1
           rust-toolchain: 1.98.0
           target: x86_64-unknown-linux-gnu
+          # OpenSSL's Configure script needs core Perl modules (including
+          # IPC::Cmd) that are absent from the stripped-down manylinux image.
+          before-script-linux: yum install -y perl-core
 
       - name: Build macOS wheel
         if: matrix.os == 'macos'
