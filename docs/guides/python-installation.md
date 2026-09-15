@@ -102,6 +102,8 @@ Other documented model IDs already exercised in this repository include `Qwen/Qw
 ## Publishing wheels (maintainers)
 
 The `Release Python` GitHub Actions workflow builds and validates Linux x86_64, macOS x86_64, and macOS arm64 wheels.
+Relevant pull requests, merge-queue entries, and pushes to `main` run this same release matrix automatically,
+including installed-wheel tests and the Linux OpenSSL linkage check. These CI runs only build and validate artifacts.
 It reads `[workspace.package].version` from `Cargo.toml` at the selected workflow commit.
 There is no separate version input or default to maintain. Leave `publish` unchecked to validate a branch before
 merging. To publish, select `main` and check `publish`; PyPI upload waits for every platform build, installed-wheel

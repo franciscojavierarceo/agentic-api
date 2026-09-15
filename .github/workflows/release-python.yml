@@ -3,6 +3,44 @@ name: Release Python
 run-name: Release Python wheels (${{ inputs.publish && 'publish' || 'build only' }})
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/python.yml"
+      - ".github/workflows/release-crates.yml"
+      - ".github/workflows/release-python.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "crates/**"
+      - "README.md"
+      - "docs/**"
+      - "pyproject.toml"
+      - "python-build-constraints.txt"
+      - "python/**"
+      - "scripts/check-python-wheel.sh"
+      - "scripts/validate-python-release-version.sh"
+      - "tests/python/**"
+  merge_group:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/python.yml"
+      - ".github/workflows/release-crates.yml"
+      - ".github/workflows/release-python.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "crates/**"
+      - "README.md"
+      - "docs/**"
+      - "pyproject.toml"
+      - "python-build-constraints.txt"
+      - "python/**"
+      - "scripts/check-python-wheel.sh"
+      - "scripts/validate-python-release-version.sh"
+      - "tests/python/**"
+
   workflow_dispatch:
     inputs:
       publish:
@@ -12,8 +50,9 @@ on:
         default: false
 
 concurrency:
-  group: release-python
-  cancel-in-progress: false
+  # Keep publication serialized, without letting PR validation occupy its queue.
+  group: release-python-${{ inputs.publish && 'publish' || format('{0}-{1}', github.event_name, github.ref) }}
+  cancel-in-progress: ${{ !inputs.publish }}
 
 permissions:
   contents: read
@@ -244,7 +283,7 @@ jobs:
   publish:
     name: Publish validated wheels to PyPI
     needs: [release-version, build-wheels]
-    if: github.ref == 'refs/heads/main' && inputs.publish
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish
     runs-on: ubuntu-latest
     environment:
       name: pypi
