@@ -22,7 +22,7 @@ jobs:
   release-version:
     name: Read declared workspace version
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || !inputs.publish
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -76,7 +76,7 @@ jobs:
     name: Build ${{ matrix.target }} wheel artifact
     needs: release-version
     runs-on: ${{ matrix.runs-on }}
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || !inputs.publish
     env:
       AGENTIC_API_RELEASE_VERSION: ${{ needs.release-version.outputs.version }}
     strategy:
