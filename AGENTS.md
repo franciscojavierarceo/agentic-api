@@ -84,6 +84,19 @@ uv pip install -r docs/requirements.txt
 uv run mkdocs serve
 ```
 
+## Releases
+
+- Read [the release guide](docs/developing/releases.md) before preparing or publishing a release or changing release
+  automation. Keep that guide synchronized with the workflow inputs and checks.
+- PRs and merges validate artifacts; they do not publish packages. Release preparation, crates publication, and PyPI
+  publication are separate manual workflows. Publish only from `main` after checking the run's commit and version.
+- Use the Cargo workspace's declared version as the source of truth. Keep the core dependency and lockfile aligned;
+  do not invent a default release version or a separate Python version.
+- Preserve duplicate-version failures and all platform-specific wheel checks. Inspect registry state before retrying
+  any failed publication; never add `skip-existing` or blindly retry a partial upload.
+- Verify actual registry artifacts before reporting a release complete or updating website install versions. PyPI
+  README/metadata fixes require a new release to reach the published package page.
+
 ## Code Style
 
 - Rust edition: 2024.
