@@ -108,4 +108,5 @@ Other documented model IDs already exercised in this repository include `Qwen/Qw
 
 See the [release guide](../developing/releases.md) for version preparation, GitHub Actions UI and CLI instructions,
 PyPI Trusted Publishing configuration, the required wheel matrix, registry verification, and recovery from failed or
-partial uploads. PRs and merges build and validate wheels; publishing requires a manual run on `main`.
+partial uploads. PRs and merges build and validate wheels. Trigger the release workflow on `main` to have GitHub
+Actions validate and publish them.

@@ -99,5 +99,5 @@ options.
 
 ## Releases
 
-Maintainers should follow the [release guide](releases.md) to prepare a version, validate artifacts, and publish to
-crates.io and PyPI. Merging a PR does not publish a package.
+Maintainers should follow the [release guide](releases.md) to prepare a version and trigger the GitHub Actions
+workflows that validate and publish to crates.io and PyPI. Merging a PR does not publish a package.

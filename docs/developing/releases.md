@@ -2,7 +2,7 @@
 
 Releases are deliberate maintainer actions. Merging a PR does **not** publish to PyPI or crates.io.
 Relevant PRs, merge-queue entries, and pushes to `main` build and validate Python release wheels automatically;
-publication requires a separate manual dispatch.
+a maintainer triggers the release workflow, and GitHub Actions handles validation and publication.
 
 The workflow files are the source of truth:
 
@@ -96,7 +96,7 @@ when changing packaging or toolchain configuration; a successful host build alon
 publishing. The installed metadata test rejects an empty or non-Markdown description. To check downloaded artifacts
 for rendering errors too, run `uvx --from twine twine check --strict /path/to/wheels/*.whl`.
 
-## 3. Publish
+## 3. Trigger the publishing workflows
 
 After validation, use **Actions → Release crates → Run workflow** on `main`, enter the same version, and **uncheck
 `dry_run`**. The workflow publishes core, waits for it to appear in the crates.io index, publishes the server, creates
@@ -108,15 +108,16 @@ it reads the declaration in `Cargo.toml`. It checks that the version is unused, 
 wheels, then uploads exactly those artifacts from the same run. A successful earlier build-only run is not promoted
 or reused. The Python workflow does not create the Git tag or GitHub release.
 
-CLI equivalents (these upload packages):
+Optional CLI equivalents to trigger the same GitHub Actions workflows:
 
 ```bash
 gh workflow run release-crates.yml --ref main -f version="$release_version" -F dry_run=false
 gh workflow run release-python.yml --ref main -F publish=true
 ```
 
-Run the publication steps once each, following each run to completion before moving on. If one registry already has
-the intended release, verify it and publish only to the remaining registry. Do not rerun the completed publication.
+Trigger each publishing workflow once, following each run to completion before moving on. If one registry already
+has the intended release, verify it and trigger only the workflow for the remaining registry. Do not rerun the
+completed publication.
 
 ## 4. Verify availability and update install instructions
 

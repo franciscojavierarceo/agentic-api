@@ -89,7 +89,8 @@ uv run mkdocs serve
 - Read [the release guide](docs/developing/releases.md) before preparing or publishing a release or changing release
   automation. Keep that guide synchronized with the workflow inputs and checks.
 - PRs and merges validate artifacts; they do not publish packages. Release preparation, crates publication, and PyPI
-  publication are separate manual workflows. Publish only from `main` after checking the run's commit and version.
+  publication use separate GitHub Actions workflows. Trigger publishing on `main` after checking the run's commit
+  and version; GitHub Actions handles validation and registry uploads.
 - Use the Cargo workspace's declared version as the source of truth. Keep the core dependency and lockfile aligned;
   do not invent a default release version or a separate Python version.
 - Preserve duplicate-version failures and all platform-specific wheel checks. Inspect registry state before retrying
