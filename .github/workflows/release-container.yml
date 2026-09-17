@@ -28,8 +28,32 @@ permissions:
   contents: read
 
 jobs:
+  authorize-publication:
+    name: Authorize publication
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify manual publisher permission
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          permission="$(gh api \
+            "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission" \
+            --jq '.permission')"
+          case "$permission" in
+            admin|maintain)
+              echo "$GITHUB_ACTOR has $permission permission"
+              ;;
+            *)
+              echo "::error::Manual container publication requires admin or maintain permission"
+              exit 1
+              ;;
+          esac
+
   publish:
     name: Build and publish Docker image
+    needs: authorize-publication
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: docker-publish
@@ -49,8 +73,7 @@ jobs:
             echo "::error::The Docker Hub environment secrets are not configured"
             exit 1
           fi
-          if ! printf '%s' "$DOCKERHUB_IMAGE" \
-            | grep -Eq '^[a-z0-9]+([._-][a-z0-9]+)*/[a-z0-9]+([._-][a-z0-9]+)*$'; then
+          if [[ ! "$DOCKERHUB_IMAGE" =~ ^[a-z0-9]+([._-][a-z0-9]+)*/[a-z0-9]+([._-][a-z0-9]+)*$ ]]; then
             echo "::error::DOCKERHUB_IMAGE must be a Docker Hub repository such as vllm/agentic-api"
             exit 1
           fi
@@ -72,7 +95,7 @@ jobs:
             source_ref="$REQUESTED_REF"
           fi
 
-          if ! printf '%s' "$source_ref" | grep -Eq '^[0-9a-fA-F]{7,40}$' \
+          if [[ ! "$source_ref" =~ ^[0-9a-fA-F]{7,40}$ ]] \
             && ! git check-ref-format --allow-onelevel "$source_ref"; then
             echo "::error::Invalid Git source ref"
             exit 1
@@ -92,6 +115,7 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           REQUESTED_IMAGE_TAG: ${{ inputs.image_tag }}
           REQUESTED_REF: ${{ inputs.source_ref }}
+          DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
         run: |
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
@@ -101,11 +125,11 @@ jobs:
           tags=()
           if [ "$EVENT_NAME" = "schedule" ] \
             || { [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$sha" = "$main_sha" ]; }; then
-            tags+=("${{ vars.DOCKERHUB_IMAGE }}:nightly")
-            tags+=("${{ vars.DOCKERHUB_IMAGE }}:nightly-$sha")
+            tags+=("$DOCKERHUB_IMAGE:nightly")
+            tags+=("$DOCKERHUB_IMAGE:nightly-$sha")
             version="nightly-$sha"
             if [ -n "$REQUESTED_IMAGE_TAG" ]; then
-              tags+=("${{ vars.DOCKERHUB_IMAGE }}:$REQUESTED_IMAGE_TAG")
+              tags+=("$DOCKERHUB_IMAGE:$REQUESTED_IMAGE_TAG")
             fi
           else
             if [ "$EVENT_NAME" = "release" ]; then
@@ -115,13 +139,13 @@ jobs:
               # Branch names may contain '/', which Docker tags do not allow.
               image_tag="${image_tag//\//-}"
             fi
-            tags+=("${{ vars.DOCKERHUB_IMAGE }}:$image_tag")
+            tags+=("$DOCKERHUB_IMAGE:$image_tag")
             version="$image_tag"
           fi
 
           for tag in "${tags[@]}"; do
             image_tag="${tag##*:}"
-            if ! printf '%s' "$image_tag" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
+            if [[ ! "$image_tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
               echo "::error::Invalid Docker image tag: $image_tag"
               exit 1
             fi
@@ -170,6 +194,7 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
+          set +x
           set -euo pipefail
           namespace="${DOCKERHUB_IMAGE%%/*}"
           repository="${DOCKERHUB_IMAGE#*/}"
@@ -177,28 +202,38 @@ jobs:
 
           # Personal access tokens are exchanged for an API bearer token.
           # Organization access tokens can be used directly as bearer tokens.
-          if api_token="$(curl --fail --silent --show-error \
-              --request POST 'https://hub.docker.com/v2/auth/token' \
-              --header 'Content-Type: application/json' \
-              --data "$(jq --null-input \
-                --arg identifier "$DOCKERHUB_USERNAME" \
-                --arg secret "$DOCKERHUB_TOKEN" \
-                '{identifier: $identifier, secret: $secret}')" \
+          auth_payload="$(jq --null-input \
+            '{identifier: env.DOCKERHUB_USERNAME, secret: env.DOCKERHUB_TOKEN}')"
+          if api_token="$(printf '%s' "$auth_payload" \
+              | curl --fail --silent --show-error \
+                --request POST 'https://hub.docker.com/v2/auth/token' \
+                --header 'Content-Type: application/json' \
+                --data-binary @- \
               | jq --exit-status --raw-output '.access_token')"; then
             :
           else
             api_token="$DOCKERHUB_TOKEN"
           fi
+          printf '::add-mask::%s\n' "$api_token"
+          unset auth_payload
 
           api_base="https://hub.docker.com/v2/namespaces/$namespace/repositories/$repository"
           url="$api_base/tags?page_size=100&name=nightly-"
           while [ "$url" != "null" ] && [ -n "$url" ]; do
+            case "$url" in
+              "$api_base/tags?"*) ;;
+              *)
+                echo "::error::Docker Hub returned an unexpected pagination URL"
+                exit 1
+                ;;
+            esac
             response="$(curl --fail --silent --show-error \
               --header "Authorization: Bearer $api_token" "$url")"
             while IFS= read -r tag; do
               [ -n "$tag" ] || continue
               echo "Deleting expired Docker tag $DOCKERHUB_IMAGE:$tag"
               curl --fail --silent --show-error \
+                --output /dev/null \
                 --request DELETE \
                 --header "Authorization: Bearer $api_token" \
                 "$api_base/tags/$tag"
