@@ -90,7 +90,9 @@ uv run mkdocs serve
   automation. Keep that guide synchronized with the workflow inputs and checks.
 - PRs and merges validate artifacts; they do not publish packages. Release preparation, crates publication, and PyPI
   publication use separate GitHub Actions workflows. Trigger publishing on `main` after checking the run's commit
-  and version; GitHub Actions handles validation and registry uploads.
+  and version; GitHub Actions handles validation and registry uploads. The crates workflow also publishes the
+  container from the release tag. Container-only recovery uses the dedicated workflow; do not republish packages
+  to repair an image or website failure.
 - Use the Cargo workspace's declared version as the source of truth. Keep the core dependency and lockfile aligned;
   do not invent a default release version or a separate Python version.
 - Preserve duplicate-version failures and all platform-specific wheel checks. Inspect registry state before retrying
