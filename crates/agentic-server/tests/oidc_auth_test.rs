@@ -1026,6 +1026,12 @@ async fn every_v1_route_rejects_missing_credentials() {
         .await
         .expect("protected models request");
     assert_eq!(models.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let retrieved = client
+        .get(format!("http://{}/v1/responses/resp_private", gateway.address))
+        .send()
+        .await
+        .expect("protected response retrieval");
+    assert_eq!(retrieved.status(), reqwest::StatusCode::UNAUTHORIZED);
 
     let websocket_error = tokio_tungstenite::connect_async(format!("ws://{}/v1/responses", gateway.address))
         .await
