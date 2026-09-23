@@ -15,9 +15,11 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use agentic_core::executor::ExecutionContext;
 use agentic_core::proxy::ProxyState;
 
+use crate::auth::api_key::require_api_key;
 use crate::auth::{ANTHROPIC_COUNT_TOKENS_PATH, ANTHROPIC_MESSAGES_PATH, OidcAuthenticator, require_oidc};
 use crate::handler::{
     compact_response, conversations, count_tokens, health, messages, models, ready, responses, responses_ws_with_auth,
+    retrieve_response,
 };
 use crate::model_capabilities::ModelCapabilities;
 use crate::telemetry::http::{HttpMetrics, track_request};
@@ -250,7 +252,8 @@ pub struct AppState {
     /// Whether `/ready` should omit the upstream health check.
     pub skip_llm_ready_check: bool,
     /// Server-configured API key; used as fallback when the request carries no
-    /// `Authorization` header on the executor path.
+    /// `Authorization` header on the executor path. Also authenticates local response
+    /// retrieval when OIDC is disabled.
     pub openai_api_key: Option<String>,
     /// Configured per-model input-modality overrides applied to the Codex model catalog.
     pub model_capabilities: Arc<ModelCapabilities>,
@@ -282,6 +285,13 @@ pub fn build_router_with_auth(
     } else {
         public_routes
     };
+    // Retrieval reads local storage, so it cannot rely on upstream credential validation.
+    let mut retrieval_route = get(retrieve_response);
+    if authenticator.is_none()
+        && let Some(key) = state.openai_api_key.as_ref().filter(|key| !key.is_empty())
+    {
+        retrieval_route = retrieval_route.route_layer(middleware::from_fn_with_state(key.clone(), require_api_key));
+    }
     let protected_routes = Router::new()
         .route("/v1/conversations", post(conversations))
         .route("/v1/models", get(models))
@@ -289,10 +299,7 @@ pub fn build_router_with_auth(
         .route(ANTHROPIC_COUNT_TOKENS_PATH, post(count_tokens))
         .route("/v1/responses", post(responses).get(responses_ws_with_auth))
         .route("/v1/responses/compact", post(compact_response))
-        .route(
-            "/v1/responses/{response_id}",
-            get(crate::handler::http::retrieve_response),
-        );
+        .route("/v1/responses/{response_id}", retrieval_route);
     let protected_routes = match authenticator {
         Some(authenticator) => {
             protected_routes.route_layer(middleware::from_fn_with_state(authenticator, require_oidc))

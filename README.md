@@ -79,6 +79,10 @@ older records created before snapshot storage (or through history-only APIs) ret
 original response cannot be reconstructed faithfully. Request-scoped MCP credentials are stripped from
 stored tool definitions. Responses created with `store: false` do not have retrievable snapshots.
 
+Retrieval requires a valid OIDC bearer token when OIDC is enabled. Otherwise, when `OPENAI_API_KEY` is
+nonempty, callers must send that key in `Authorization: Bearer <key>`; missing or invalid credentials
+return `401` before storage is read. With neither configured, retrieval allows unauthenticated access.
+
 ## 🚀 Quickstart
 
 ### Agentic API CLI

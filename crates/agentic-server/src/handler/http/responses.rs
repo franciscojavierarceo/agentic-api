@@ -133,6 +133,7 @@ pub async fn compact_response(State(state): State<AppState>, req: Request) -> Re
     params(("response_id" = String, Path, description = "Stored response ID")),
     responses(
         (status = 200, description = "Stored response", body = agentic_core::types::request_response::ResponsePayload),
+        (status = 401, description = "Missing or invalid bearer token", body = crate::openapi::ApiErrorResponse),
         (status = 404, description = "Response not found", body = crate::openapi::ApiErrorResponse),
         (status = 409, description = "Legacy response has no retrievable payload", body = crate::openapi::ApiErrorResponse),
     ),

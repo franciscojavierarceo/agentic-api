@@ -245,6 +245,7 @@ async fn check_delivery_and_restart(
     let _gateway_guard = AbortOnDrop(gateway.abort_handle());
     let retrieved = client
         .get(format!("{gateway_url}/v1/responses/{response_id}"))
+        .bearer_auth("test-key")
         .send()
         .await
         .unwrap();
