@@ -1,4 +1,4 @@
-//! Actual HTTP qualification for disconnects during built-in tool execution (#110).
+//! Actual HTTP qualification for disconnects during inference and built-in tools (#110).
 #[allow(dead_code)]
 mod common;
 
@@ -31,8 +31,8 @@ impl Server {
     }
 }
 
-struct SearchBodyGuard(Arc<Notify>);
-impl Drop for SearchBodyGuard {
+struct PendingBodyGuard(Arc<Notify>);
+impl Drop for PendingBodyGuard {
     fn drop(&mut self) {
         self.0.notify_one();
     }
@@ -43,11 +43,26 @@ impl Drop for SearchBodyGuard {
 /// timeout, replay the tool, or start another inference round.
 #[tokio::test]
 async fn messages_http_disconnect_during_search_cancels_outbound_body() {
+    assert_disconnect(false).await;
+}
+
+#[tokio::test]
+async fn messages_http_disconnect_during_inference_cancels_outbound_body() {
+    assert_disconnect(true).await;
+}
+
+async fn assert_disconnect(during_inference: bool) {
     let inference_calls = Arc::new(AtomicUsize::new(0));
     let search_calls = Arc::new(AtomicUsize::new(0));
-    let search_started = Arc::new(Notify::new());
-    let search_dropped = Arc::new(Notify::new());
-    let app = upstream_routes(&inference_calls, &search_calls, &search_started, &search_dropped);
+    let outbound_started = Arc::new(Notify::new());
+    let outbound_dropped = Arc::new(Notify::new());
+    let app = upstream_routes(
+        &inference_calls,
+        &search_calls,
+        &outbound_started,
+        &outbound_dropped,
+        during_inference,
+    );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let upstream_url = format!("http://{}", listener.local_addr().unwrap());
     let upstream = Server(tokio::spawn(async move { axum::serve(listener, app).await.unwrap() }));
@@ -77,21 +92,25 @@ async fn messages_http_disconnect_during_search_cancels_outbound_body() {
     .unwrap()
     .unwrap();
     assert_eq!(response.status(), http::StatusCode::OK);
-    tokio::time::timeout(Duration::from_secs(5), search_started.notified())
+    tokio::time::timeout(Duration::from_secs(5), outbound_started.notified())
         .await
-        .expect("tool started");
+        .expect("outbound request started");
     assert!(
-        tokio::time::timeout(Duration::from_millis(100), search_dropped.notified())
+        tokio::time::timeout(Duration::from_millis(100), outbound_dropped.notified())
             .await
             .is_err(),
-        "search must remain pending while the client stays connected"
+        "outbound request must remain pending while the client stays connected"
     );
     // This is a client HTTP disconnect, not a direct drop of a core executor stream.
     drop(response);
-    tokio::time::timeout(Duration::from_secs(5), search_dropped.notified())
+    tokio::time::timeout(Duration::from_secs(5), outbound_dropped.notified())
         .await
         .expect("outbound body cancelled");
-    assert_eq!(search_calls.load(Ordering::SeqCst), 1, "one tool request, no replay");
+    assert_eq!(
+        search_calls.load(Ordering::SeqCst),
+        usize::from(!during_inference),
+        "no premature tool dispatch or replay"
+    );
     assert_eq!(
         inference_calls.load(Ordering::SeqCst),
         1,
@@ -112,17 +131,22 @@ async fn messages_http_disconnect_during_search_cancels_outbound_body() {
 fn upstream_routes(
     inference_calls: &Arc<AtomicUsize>,
     search_calls: &Arc<AtomicUsize>,
-    search_started: &Arc<Notify>,
-    search_dropped: &Arc<Notify>,
+    outbound_started: &Arc<Notify>,
+    outbound_dropped: &Arc<Notify>,
+    during_inference: bool,
 ) -> Router {
     let route_inference = Arc::clone(inference_calls);
     let route_search = Arc::clone(search_calls);
-    let started = Arc::clone(search_started);
-    let dropped = Arc::clone(search_dropped);
+    let started = Arc::clone(outbound_started);
+    let dropped = Arc::clone(outbound_dropped);
+    let inference_started = Arc::clone(outbound_started);
+    let inference_dropped = Arc::clone(outbound_dropped);
     Router::new()
         .route("/v1/messages", post(move |Json(_): Json<Value>| {
             route_inference.fetch_add(1, Ordering::SeqCst);
-            async {
+            let started = Arc::clone(&inference_started);
+            let dropped = Arc::clone(&inference_dropped);
+            async move {
                 let events = [
                     json!({"type":"message_start", "message":{"id":"m", "type":"message", "role":"assistant",
                         "content":[], "model":"test", "usage":{"input_tokens":1,"output_tokens":0}}}),
@@ -135,15 +159,26 @@ fn upstream_routes(
                     json!({"type":"message_stop"}),
                 ];
                 let mut body = String::new();
-                for event in events {
+                for event in events.iter().take(if during_inference { 3 } else { events.len() }) {
                     write!(body, "data: {event}\n\n").unwrap();
                 }
-                Response::builder().header("content-type", "text/event-stream").body(Body::from(body)).unwrap()
+                let body = if during_inference {
+                    started.notify_one();
+                    let guard = PendingBodyGuard(dropped);
+                    Body::from_stream(futures::stream::once(async move { Ok::<_, Infallible>(Bytes::from(body)) })
+                        .chain(futures::stream::once(async move {
+                            let _guard = guard;
+                            std::future::pending::<Result<Bytes, Infallible>>().await
+                        })))
+                } else {
+                    Body::from(body)
+                };
+                Response::builder().header("content-type", "text/event-stream").body(body).unwrap()
             }
         }))
         .route("/v1/search", get(move || {
             route_search.fetch_add(1, Ordering::SeqCst);
-            let guard = SearchBodyGuard(Arc::clone(&dropped));
+            let guard = PendingBodyGuard(Arc::clone(&dropped));
             started.notify_one();
             async move {
                 let body = futures::stream::once(async { Ok::<_, Infallible>(Bytes::from_static(b"{\"results\":")) })
