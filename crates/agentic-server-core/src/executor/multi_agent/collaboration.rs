@@ -54,6 +54,8 @@ pub(in crate::executor) fn instructions(identity: &AgentIdentity, max_subagents:
          writing a tool name, JSON arguments, or a <to=...> block in a message does not execute an action. \
          You may call more than one function tool in a model round. \
          spawn_agent creates a child; its availability is not an instruction to delegate. \
+         For spawn_agent.task_name use a lowercase identifier with only letters, digits and underscores, \
+         such as csv_docs; spaces and capitals are invalid. \
          send_message queues information without activating idle agents; \
          followup_task activates a non-root agent; wait_agent waits for mailbox updates; interrupt_agent interrupts \
          active work while retaining context. Targets can be child names or canonical paths. \
@@ -61,7 +63,9 @@ pub(in crate::executor) fn instructions(identity: &AgentIdentity, max_subagents:
          A direct child's canonical path is your own path followed by / and one name. \
          There are {max_subagents} active subagent slots shared across the entire tree, excluding /root; \
          this is not a separate allowance for each agent. Only a successful spawn acknowledgement creates a child. \
-         A spawn error creates no agent: do the work yourself or continue existing work instead of waiting for that spawn. \
+         A spawn error creates no agent. If its arguments were invalid and delegation is still needed, \
+         correct them before retrying. If capacity is full, do not retry until a slot is free. \
+         Never wait for a child that was not created. \
          Wait only when you actually need an outstanding result or a requested message from another agent. \
          A running status alone is not a reason to wait. A wait timeout is not evidence of progress. \
          Continue useful work while agents run. Subagent final answers are delivered to their parent. \
@@ -74,8 +78,8 @@ pub(in crate::executor) fn tools() -> Vec<UpstreamTool> {
     [
         (
             "spawn_agent",
-            "Create a child for a strictly smaller, non-overlapping part of your assignment while you do other useful work. Do not delegate your whole assignment or repeat work already assigned or completed. Only success creates a child; on an error, continue the work yourself. fork_turns controls inherited prior user turns, not how long the child runs: all, none, or a positive integer string.",
-            json!({"task_name":{"type":"string"},"message":{"type":"string"},"fork_turns":{"type":"string"}}),
+            "Create a child for a strictly smaller, non-overlapping part of your assignment while you do other useful work. Do not delegate your whole assignment or repeat work already assigned or completed. Only success creates a child; correct invalid arguments before retrying, and do not retry a capacity error until a slot is free. task_name must be a lowercase identifier such as csv_docs, with no spaces or capitals. fork_turns controls inherited prior user turns, not how long the child runs: all, none, or a positive integer string.",
+            json!({"task_name":{"type":"string","pattern":"^[a-z0-9_]+$","description":"Lowercase identifier with letters, digits or underscores; for example, csv_docs. Do not use spaces or capitals."},"message":{"type":"string"},"fork_turns":{"type":"string"}}),
             vec!["task_name", "message"],
         ),
         (
@@ -92,7 +96,7 @@ pub(in crate::executor) fn tools() -> Vec<UpstreamTool> {
         ),
         (
             "wait_agent",
-            "Wait for an outstanding result or requested mailbox message. Do not wait merely because other agents are running. timeout_ms is between 10000 and 3600000, default 30000.",
+            "Wait for an outstanding result or requested mailbox message; returns early when mail arrives. Do not wait merely because other agents are running. A timeout does not mean an agent failed; reassess whether the result is still needed before waiting again. timeout_ms is between 10000 and 3600000, default 30000.",
             json!({"timeout_ms":{"type":"integer","minimum":10_000,"maximum":3_600_000}}),
             vec![],
         ),

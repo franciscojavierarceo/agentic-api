@@ -309,10 +309,10 @@ impl MultiAgentRun {
     }
 }
 
-fn listing_status(state: AgentState) -> AgentListingStatus {
+fn listing_status(state: AgentState, final_answer: Option<&str>) -> AgentListingStatus {
     match state {
         AgentState::Active(_) => AgentListingStatus::Running,
-        AgentState::Idle => AgentListingStatus::Completed,
+        AgentState::Idle => AgentListingStatus::Completed(final_answer.unwrap_or_default().to_owned()),
         AgentState::Interrupted => AgentListingStatus::Interrupted,
         AgentState::Failed => AgentListingStatus::Failed,
     }

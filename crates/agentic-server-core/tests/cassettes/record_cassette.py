@@ -953,6 +953,24 @@ def _build_tool_output_input(
     return input_items
 
 
+def _report_tool_output_injection(tool_calls: list[dict], input_items: list[dict]) -> None:
+    submitted_ids = {
+        item["call_id"]
+        for item in input_items
+        if isinstance(item, dict) and isinstance(item.get("call_id"), str)
+    }
+    click.echo(
+        f"  [injecting {len(submitted_ids)}/{len(tool_calls)} client-tool output(s) before user message]"
+    )
+    for call in tool_calls:
+        if call.get("call_id") not in submitted_ids:
+            click.echo(
+                f"  [no scripted output for {call.get('type')} {call.get('name', '')!r} "
+                f"(call_id={call.get('call_id')})]",
+                err=True,
+            )
+
+
 def run_conv(
     client: httpx.Client,
     turns: int,
@@ -1245,9 +1263,7 @@ def run_responses(
                     prompt if prompt else None,
                     tool_search_output_tools,
                 )
-                click.echo(
-                    f"  [injecting {len(pending_calls)} tool output(s) before user message]"
-                )
+                _report_tool_output_injection(pending_calls, input_value)
             else:
                 input_value = prompt
 
@@ -1331,7 +1347,7 @@ def run_responses(
         pending_calls = _extract_tool_calls(branch_response) if tool_outputs else []
         if pending_calls and tool_outputs:
             input_value = _build_tool_output_input(pending_calls, tool_outputs, prompt if prompt else None)
-            click.echo(f"  [injecting {len(pending_calls)} tool output(s) before user message]")
+            _report_tool_output_injection(pending_calls, input_value)
         else:
             input_value = prompt
 

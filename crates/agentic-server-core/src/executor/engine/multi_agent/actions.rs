@@ -63,7 +63,7 @@ impl MultiAgentRun {
         pipeline: &mut AgentPipeline,
     ) -> ExecutorResult<Option<CollaborationResult>> {
         match command {
-            AgentCommand::Spawn(task) => self.spawn_agent(turn, task),
+            AgentCommand::Spawn(task) => self.spawn_agent(turn, task, pipeline).await,
             AgentCommand::Send(task) => {
                 let target = self.target(&turn.agent, &task.target)?;
                 self.registry
@@ -90,11 +90,12 @@ impl MultiAgentRun {
                     .map_err(registry_error)?;
                 let context = self.contexts.get_mut(&target).expect("target was resolved");
                 context.generation += 1;
-                context.stored.last_task = task.message;
+                context.stored.last_task.clone_from(&task.message);
                 if !active {
                     context.execution.restart();
                     context.stored.final_answer = None;
                 }
+                self.publish_mail(&turn.agent, &target, &task.message, pipeline).await?;
                 Ok(Some(CollaborationResult::Wait {
                     message: String::new(),
                     timed_out: false,
@@ -105,9 +106,11 @@ impl MultiAgentRun {
                     .registry
                     .agents()
                     .map(|agent| AgentListing {
-                        task_name: agent.identity.to_string(),
-                        status: listing_status(agent.state),
-                        last_task_message: self.contexts[agent.identity].stored.last_task.clone(),
+                        agent_name: agent.identity.to_string(),
+                        agent_status: listing_status(
+                            agent.state,
+                            self.contexts[agent.identity].stored.final_answer.as_deref(),
+                        ),
                     })
                     .collect(),
             })),
@@ -135,10 +138,11 @@ impl MultiAgentRun {
         }
     }
 
-    pub(super) fn spawn_agent(
+    pub(super) async fn spawn_agent(
         &mut self,
         turn: &AgentTurnKey,
         task: SpawnAgent,
+        pipeline: &mut AgentPipeline,
     ) -> ExecutorResult<Option<CollaborationResult>> {
         self.check_admission()?;
         if !task
@@ -182,7 +186,7 @@ impl MultiAgentRun {
                     mailbox: Vec::new(),
                     history,
                     loaded_tools,
-                    last_task: task.message,
+                    last_task: task.message.clone(),
                     final_answer: None,
                     rounds: 0,
                     wait: None,
@@ -192,6 +196,8 @@ impl MultiAgentRun {
                 tool_search,
             },
         );
+        self.publish_mail(&turn.agent, &child.agent, &task.message, pipeline)
+            .await?;
         Ok(Some(CollaborationResult::Spawned {
             task_name: child.agent.to_string(),
         }))
@@ -208,7 +214,7 @@ impl MultiAgentRun {
             return Err(invalid("an agent cannot interrupt itself"));
         }
         let agent = self.registry.get(&target).expect("target was resolved");
-        let previous_status = listing_status(agent.state);
+        let previous_status = listing_status(agent.state, self.contexts[&target].stored.final_answer.as_deref());
         let key = AgentTurnKey {
             agent: target.clone(),
             turn: agent.turn,
