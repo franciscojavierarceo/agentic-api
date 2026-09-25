@@ -4,9 +4,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use super::io::{
-    FunctionTool, InputItem, InputMessage, InputMessageContent, OutputItem, ResponseUsage, ResponsesInput, ToolChoice,
-};
+use super::io::{FunctionTool, InputItem, OutputItem, ResponseUsage, ResponsesInput, ToolChoice};
 use super::tools::ResponsesTool;
 use crate::tool::{CodexNamespaceHandler, CustomHandler, ToolError};
 use crate::utils::common::serialize_to_string;
@@ -31,7 +29,7 @@ pub struct ReasoningConfig {
 }
 
 /// Responses text-generation settings forwarded to the upstream service.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct ResponseTextConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -186,7 +184,10 @@ impl utoipa::ToSchema for RequestPayload {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A Responses request. Rust's derived default uses `store: false`; JSON deserialization
+/// uses `store: true` when storage is not specified. Set `store` explicitly when constructing
+/// a stored request with struct update syntax.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(bound(serialize = "Box<T>: Serialize", deserialize = "Box<T>: Deserialize<'de>"))]
 pub struct RequestPayload<T: ?Sized = ResponseTextConfig> {
     pub model: String,
@@ -387,7 +388,7 @@ impl RequestPayload {
         });
         let tools = tools.filter(|tools| !tools.is_empty());
         let namespace_map = CodexNamespaceHandler.build_namespace_map(self.tools.as_deref())?;
-        let input = CodexNamespaceHandler.resolve_input(namespace_map.as_ref(), self.input.model_input());
+        let input = CodexNamespaceHandler.resolve_input(namespace_map.as_ref(), self.input.normalized_model_input());
         let tool_choice = CodexNamespaceHandler.resolve_tool_choice(namespace_map.as_ref(), self.tool_choice.as_ref());
         CustomHandler::validate_tool_choice(self.tools.as_deref(), &tool_choice)?;
         Ok(UpstreamRequest {
@@ -517,59 +518,41 @@ impl ResponsePayload {
     }
 }
 
-impl From<&ResponsesInput> for Vec<InputItem> {
-    fn from(input: &ResponsesInput) -> Self {
-        match input {
-            ResponsesInput::Text(text) => vec![InputItem::Message(InputMessage {
-                id: None,
-                role: "user".into(),
-                status: None,
-                content: InputMessageContent::Text(text.clone()),
-            })],
-            ResponsesInput::Items(items) => items
-                .iter()
-                .filter_map(|item| match item {
-                    InputItem::Unknown => None,
-                    InputItem::ShellCall(call) => Some(InputItem::FunctionCall(call.clone().into())),
-                    InputItem::ShellCallOutput(output) => Some(InputItem::FunctionCallOutput(output.clone().into())),
-                    InputItem::CustomToolCall(call) => Some(InputItem::FunctionCall(call.clone().into())),
-                    InputItem::CustomToolCallOutput(output) => {
-                        Some(InputItem::FunctionCallOutput(output.clone().into()))
-                    }
-                    item => Some(item.clone()),
-                })
-                .collect(),
-        }
-    }
-}
-
-impl From<ResponsesInput> for Vec<InputItem> {
-    fn from(input: ResponsesInput) -> Self {
-        match input {
-            ResponsesInput::Text(text) => vec![InputItem::Message(InputMessage {
-                id: None,
-                role: "user".into(),
-                status: None,
-                content: InputMessageContent::Text(text),
-            })],
-            ResponsesInput::Items(items) => items
-                .into_iter()
-                .filter_map(|item| match item {
-                    InputItem::Unknown => None,
-                    InputItem::ShellCall(call) => Some(InputItem::FunctionCall(call.into())),
-                    InputItem::ShellCallOutput(output) => Some(InputItem::FunctionCallOutput(output.into())),
-                    InputItem::CustomToolCall(call) => Some(InputItem::FunctionCall(call.into())),
-                    InputItem::CustomToolCallOutput(output) => Some(InputItem::FunctionCallOutput(output.into())),
-                    item => Some(item),
-                })
-                .collect(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stored_struct_defaults_match_minimal_wire_request() {
+        let wire: RequestPayload = serde_json::from_value(serde_json::json!({
+            "model": "test-model", "input": "hello"
+        }))
+        .unwrap();
+        let fixture: RequestPayload = RequestPayload {
+            model: "test-model".into(),
+            input: ResponsesInput::Text("hello".into()),
+            store: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            serde_json::to_value(fixture).unwrap(),
+            serde_json::to_value(wire).unwrap()
+        );
+    }
+
+    #[test]
+    fn rust_defaults_do_not_make_required_wire_fields_optional() {
+        let default: RequestPayload = RequestPayload::default();
+        assert!(!default.store);
+        assert!(matches!(default.input, ResponsesInput::Items(items) if items.is_empty()));
+
+        for wire in [
+            serde_json::json!({"model": "test-model"}),
+            serde_json::json!({"input": "hello"}),
+        ] {
+            assert!(serde_json::from_value::<RequestPayload>(wire).is_err());
+        }
+    }
 
     #[test]
     fn request_payload_preserves_ignore_eos_upstream() {
