@@ -154,7 +154,7 @@ pub(super) fn run_stream(
                                 while let Ok(event) = event_rx.try_recv() {
                                     yield consume_stream_event(event, &mut next_sequence_number);
                                 }
-                                let terminal = completed_stream_chunk(
+                                let terminal = Box::pin(completed_stream_chunk(
                                     payload,
                                     ctx,
                                     tool_search_metadata,
@@ -162,7 +162,7 @@ pub(super) fn run_stream(
                                     &exec_ctx,
                                     next_sequence_number,
                                     &mut execution,
-                                )
+                                ))
                                 .await;
                                 execution.delivered();
                                 yield terminal;
