@@ -2,7 +2,6 @@
   "version": 1,
   "baseline": {
     "crates/agentic-server-core/src/executor/accumulator/mod.rs": 666,
-    "crates/agentic-server-core/src/executor/engine.rs": 522,
     "crates/agentic-server-core/src/executor/gateway.rs": 580,
     "crates/agentic-server-core/src/executor/session.rs": 508,
     "crates/agentic-server-core/src/tool/registry.rs": 515,
@@ -15,6 +14,11 @@
     "crates/agentic-server/src/auth.rs": 799,
     "crates/agentic-server/src/handler/websocket/responses.rs": 784
   },
-  "exceptions": {},
+  "exceptions": {
+    "crates/agentic-server-core/src/types/request_response.rs": {
+      "limit": 534,
+      "reason": "HTTP multi-agent request admission adds gateway-owned configuration and validation while the prior 520-line baseline remains fixed for this PR stack."
+    }
+  },
   "generated": {}
 }
