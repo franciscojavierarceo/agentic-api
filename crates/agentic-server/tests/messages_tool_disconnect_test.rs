@@ -43,15 +43,27 @@ impl Drop for PendingBodyGuard {
 /// timeout, replay the tool, or start another inference round.
 #[tokio::test]
 async fn messages_http_disconnect_during_search_cancels_outbound_body() {
-    assert_disconnect(false).await;
+    assert_disconnect(DisconnectPhase::Search).await;
 }
 
 #[tokio::test]
 async fn messages_http_disconnect_during_inference_cancels_outbound_body() {
-    assert_disconnect(true).await;
+    assert_disconnect(DisconnectPhase::Inference).await;
 }
 
-async fn assert_disconnect(during_inference: bool) {
+#[tokio::test]
+async fn messages_http_disconnect_after_search_cancels_continuation_without_replay() {
+    assert_disconnect(DisconnectPhase::Continuation).await;
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum DisconnectPhase {
+    Inference,
+    Search,
+    Continuation,
+}
+
+async fn assert_disconnect(phase: DisconnectPhase) {
     let inference_calls = Arc::new(AtomicUsize::new(0));
     let search_calls = Arc::new(AtomicUsize::new(0));
     let outbound_started = Arc::new(Notify::new());
@@ -61,7 +73,7 @@ async fn assert_disconnect(during_inference: bool) {
         &search_calls,
         &outbound_started,
         &outbound_dropped,
-        during_inference,
+        phase,
     );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let upstream_url = format!("http://{}", listener.local_addr().unwrap());
@@ -108,12 +120,12 @@ async fn assert_disconnect(during_inference: bool) {
         .expect("outbound body cancelled");
     assert_eq!(
         search_calls.load(Ordering::SeqCst),
-        usize::from(!during_inference),
+        usize::from(phase != DisconnectPhase::Inference),
         "no premature tool dispatch or replay"
     );
     assert_eq!(
         inference_calls.load(Ordering::SeqCst),
-        1,
+        if phase == DisconnectPhase::Continuation { 2 } else { 1 },
         "no continuation after disconnect"
     );
     for table in ["responses", "items", "conversations"] {
@@ -133,7 +145,7 @@ fn upstream_routes(
     search_calls: &Arc<AtomicUsize>,
     outbound_started: &Arc<Notify>,
     outbound_dropped: &Arc<Notify>,
-    during_inference: bool,
+    phase: DisconnectPhase,
 ) -> Router {
     let route_inference = Arc::clone(inference_calls);
     let route_search = Arc::clone(search_calls);
@@ -143,11 +155,13 @@ fn upstream_routes(
     let inference_dropped = Arc::clone(outbound_dropped);
     Router::new()
         .route("/v1/messages", post(move |Json(_): Json<Value>| {
-            route_inference.fetch_add(1, Ordering::SeqCst);
+            let round = route_inference.fetch_add(1, Ordering::SeqCst);
+            let during_inference = phase == DisconnectPhase::Inference
+                || (phase == DisconnectPhase::Continuation && round > 0);
             let started = Arc::clone(&inference_started);
             let dropped = Arc::clone(&inference_dropped);
             async move {
-                let events = [
+                let mut events = [
                     json!({"type":"message_start", "message":{"id":"m", "type":"message", "role":"assistant",
                         "content":[], "model":"test", "usage":{"input_tokens":1,"output_tokens":0}}}),
                     json!({"type":"content_block_start", "index":0, "content_block":{
@@ -158,6 +172,12 @@ fn upstream_routes(
                     json!({"type":"message_delta", "delta":{"stop_reason":"tool_use"}, "usage":{"output_tokens":4}}),
                     json!({"type":"message_stop"}),
                 ];
+                if round > 0 {
+                    events[1] = json!({"type":"content_block_start", "index":0,
+                        "content_block":{"type":"text", "text":""}});
+                    events[2] = json!({"type":"content_block_delta", "index":0,
+                        "delta":{"type":"text_delta", "text":"Partial answer"}});
+                }
                 let mut body = String::new();
                 for event in events.iter().take(if during_inference { 3 } else { events.len() }) {
                     write!(body, "data: {event}\n\n").unwrap();
@@ -178,9 +198,15 @@ fn upstream_routes(
         }))
         .route("/v1/search", get(move || {
             route_search.fetch_add(1, Ordering::SeqCst);
-            let guard = PendingBodyGuard(Arc::clone(&dropped));
-            started.notify_one();
+            let guard = (phase == DisconnectPhase::Search).then(|| PendingBodyGuard(Arc::clone(&dropped)));
+            if guard.is_some() {
+                started.notify_one();
+            }
             async move {
+                if phase == DisconnectPhase::Continuation {
+                    return Response::builder().header("content-type", "application/json")
+                        .body(Body::from(r#"{"results":{"web":[],"news":[]}}"#)).unwrap();
+                }
                 let body = futures::stream::once(async { Ok::<_, Infallible>(Bytes::from_static(b"{\"results\":")) })
                     .chain(futures::stream::once(async move {
                         let _guard = guard;
