@@ -164,6 +164,57 @@ fn message_completed_parts_survive_lenient_finalization_without_item_done() {
 }
 
 #[test]
+fn message_completion_accepts_one_based_content_index_without_ignoring_conflicts() {
+    use serde_json::json;
+    let opening = json!({"type": "message", "id": "msg_1", "role": "assistant",
+        "status": "in_progress", "content": []});
+    let part = json!({"type": "output_text", "text": "HELLO", "annotations": [], "logprobs": null});
+    for validation in [Validation::Strict, Validation::Lenient] {
+        let mut acc = collaboration_accumulator(validation);
+        feed_collaboration_event(
+            &mut acc,
+            &json!({"type": "response.output_item.added", "output_index": 0, "item": opening}),
+        )
+        .unwrap();
+        feed_collaboration_event(
+            &mut acc,
+            &json!({"type": "response.content_part.done", "output_index": 0,
+                "item_id": "msg_1", "content_index": 1, "part": part}),
+        )
+        .unwrap();
+        let mut done = opening.clone();
+        done["status"] = json!("completed");
+        done["content"] = json!([part]);
+        feed_collaboration_event(
+            &mut acc,
+            &json!({"type": "response.output_item.done", "output_index": 0, "item": done}),
+        )
+        .unwrap();
+
+        let mut conflicting = collaboration_accumulator(validation);
+        feed_collaboration_event(
+            &mut conflicting,
+            &json!({"type": "response.output_item.added", "output_index": 0, "item": opening}),
+        )
+        .unwrap();
+        feed_collaboration_event(
+            &mut conflicting,
+            &json!({"type": "response.content_part.done", "output_index": 0,
+                "item_id": "msg_1", "content_index": 1, "part": part}),
+        )
+        .unwrap();
+        done["content"] = json!([{"type": "output_text", "text": "OTHER"}]);
+        assert!(
+            feed_collaboration_event(
+                &mut conflicting,
+                &json!({"type": "response.output_item.done", "output_index": 0, "item": done}),
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
 fn message_completion_cannot_reassign_identity_or_rewrite_completed_parts() {
     use serde_json::json;
     let opening = json!({"type": "message", "id": "msg_child", "role": "assistant", "phase": "final_answer",

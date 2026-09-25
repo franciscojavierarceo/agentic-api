@@ -166,9 +166,13 @@ impl MessageState {
                 "message completion changes role, phase, or attribution",
             ));
         }
-        for (index, part) in &self.parts {
+        // Some providers number the first content part from one. The terminal
+        // snapshot contains parts in index order, without their stream indexes.
+        let mut ordered_parts: Vec<_> = self.parts.iter().collect();
+        ordered_parts.sort_unstable_by_key(|(index, _)| *index);
+        for (position, (_, part)) in ordered_parts.into_iter().enumerate() {
             if let MessagePart::Completed(part) = part
-                && done.content.get(*index as usize) != Some(part)
+                && done.content.get(position) != Some(part)
             {
                 return Err(invalid_message(
                     "message completion contradicts a completed content part",
