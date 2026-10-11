@@ -140,7 +140,7 @@ async fn final_root_tier_controls_json_sse_and_stored_snapshot() {
                 assert_eq!(payload.status, if status == "failed" { "error" } else { status });
                 assert!(payload.standard_fields.store);
                 assert!(payload.standard_fields.parallel_tool_calls);
-                assert_eq!(payload.standard_fields.temperature, 0.4);
+                assert!((payload.standard_fields.temperature - 0.4).abs() < f64::EPSILON);
                 assert_eq!(payload.standard_fields.metadata["review"], "multi-agent");
                 assert_eq!(payload.standard_fields.completed_at.is_some(), status == "completed");
                 if status == "failed" {
